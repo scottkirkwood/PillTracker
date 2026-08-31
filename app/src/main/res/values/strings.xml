@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Pill Tracker</string>
+    <string name="channel_quiet_name">Pill Reminders (Quiet)</string>
+    <string name="channel_quiet_desc">Silent heads-up notifications for scheduled medications</string>
+    <string name="channel_alarm_name">Pill Alarms (Escalated)</string>
+    <string name="channel_alarm_desc">Audible beep and alarms if quiet notifications are missed</string>
+</resources>
