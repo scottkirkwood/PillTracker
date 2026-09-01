@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,12 +25,19 @@ import com.scott.pilltracker.alarm.AlarmScheduler
 import com.scott.pilltracker.alarm.NotificationHelper
 import com.scott.pilltracker.data.PillRepository
 import com.scott.pilltracker.model.PillItem
+import com.scott.pilltracker.model.PillLog
 import com.scott.pilltracker.model.PillsConfig
 import com.scott.pilltracker.model.SyncState
 import com.scott.pilltracker.ui.theme.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+fun formatLogTime(log: PillLog?, repository: PillRepository): String? {
+    if (log == null) return null
+    val date = repository.parseUtcIsoDate(log.timestamp) ?: return null
+    return SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
+}
 
 @Composable
 fun HomeScreen(
@@ -43,8 +49,20 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val logs by repository.logsFlow.collectAsState()
 
-    val morningTaken = repository.isRoutineTakenToday("morning")
-    val eveningTaken = repository.isRoutineTakenToday("evening")
+    // Reactively compute whether routines and adhoc items were taken today in local device time
+    val morningLog = remember(logs) { repository.getLastRoutineTakenToday("morning") }
+    val eveningLog = remember(logs) { repository.getLastRoutineTakenToday("evening") }
+
+    val morningTakenTime = remember(morningLog) { formatLogTime(morningLog, repository) }
+    val eveningTakenTime = remember(eveningLog) { formatLogTime(eveningLog, repository) }
+
+    val creatineLog = remember(logs) { repository.getLastItemTakenToday("creatine") }
+    val glycineLog = remember(logs) { repository.getLastItemTakenToday("glycine") }
+    val dogPillLog = remember(logs) { repository.getLastItemTakenToday("dog_pill") }
+
+    val creatineTime = remember(creatineLog) { formatLogTime(creatineLog, repository) }
+    val glycineTime = remember(glycineLog) { formatLogTime(glycineLog, repository) }
+    val dogPillTime = remember(dogPillLog) { formatLogTime(dogPillLog, repository) }
 
     var isSyncing by remember { mutableStateOf(false) }
 
@@ -86,7 +104,8 @@ fun HomeScreen(
                 time = morningRoutine?.time ?: "07:30",
                 icon = Icons.Filled.WbSunny,
                 iconColor = AccentAmber,
-                isTaken = morningTaken,
+                isTaken = morningLog != null,
+                takenTime = morningTakenTime,
                 items = morningItems,
                 escalateMinutes = morningRoutine?.escalateAfterMinutes ?: 60,
                 onTakeAll = { selectedIds ->
@@ -111,7 +130,8 @@ fun HomeScreen(
                 time = eveningRoutine?.time ?: "20:00",
                 icon = Icons.Filled.NightsStay,
                 iconColor = AccentPurple,
-                isTaken = eveningTaken,
+                isTaken = eveningLog != null,
+                takenTime = eveningTakenTime,
                 items = eveningItems,
                 escalateMinutes = eveningRoutine?.escalateAfterMinutes ?: 60,
                 onTakeAll = { selectedIds ->
@@ -129,6 +149,12 @@ fun HomeScreen(
         // Quick / Ad-hoc Logging Card
         item {
             AdhocLoggingCard(
+                creatineTaken = creatineLog != null,
+                creatineTime = creatineTime,
+                glycineTaken = glycineLog != null,
+                glycineTime = glycineTime,
+                dogPillTaken = dogPillLog != null,
+                dogPillTime = dogPillTime,
                 onLogAdhoc = { id, name ->
                     scope.launch {
                         repository.logAdhocTaken(id, "Logged: $name")
@@ -192,12 +218,49 @@ fun RoutineCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     iconColor: Color,
     isTaken: Boolean,
+    takenTime: String?,
     items: List<PillItem>,
     escalateMinutes: Int,
     onTakeAll: (List<String>) -> Unit
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     val selectedItemIds = remember(items) { mutableStateListOf(*items.map { it.id }.toTypedArray()) }
+    var showRetakeConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showRetakeConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showRetakeConfirmDialog = false },
+            title = { Text("Retake $title?", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                val timeMsg = if (!takenTime.isNullOrBlank()) " at $takenTime" else ""
+                Text(
+                    "You have already taken your $title today$timeMsg.\n\nDo you really want to take it again?",
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRetakeConfirmDialog = false
+                        onTakeAll(selectedItemIds.toList())
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                ) {
+                    Text("Yes, Take Again", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showRetakeConfirmDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
+                ) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = BgSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 
     Card(
         modifier = Modifier
@@ -239,7 +302,8 @@ fun RoutineCard(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             Icon(Icons.Filled.Check, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(14.dp))
-                            Text("Taken Today", color = AccentGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            val label = if (!takenTime.isNullOrBlank()) "Taken at $takenTime" else "Taken Today"
+                            Text(label, color = AccentGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -345,14 +409,35 @@ fun RoutineCard(
                 }
 
                 Button(
-                    onClick = { onTakeAll(selectedItemIds.toList()) },
+                    onClick = {
+                        if (isTaken) {
+                            showRetakeConfirmDialog = true
+                        } else {
+                            onTakeAll(selectedItemIds.toList())
+                        }
+                    },
                     modifier = Modifier.weight(0.6f),
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isTaken) BgCardHover else AccentBlue)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isTaken) AccentGreen.copy(alpha = 0.18f) else AccentBlue,
+                        contentColor = if (isTaken) AccentGreen else TextPrimary
+                    ),
+                    border = if (isTaken) ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(AccentGreen.copy(alpha = 0.4f))
+                    ) else null
                 ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (isTaken) AccentGreen else TextPrimary
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isTaken) "Take Again" else "Take All", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isTaken) "Taken" else "Take All",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -361,6 +446,12 @@ fun RoutineCard(
 
 @Composable
 fun AdhocLoggingCard(
+    creatineTaken: Boolean,
+    creatineTime: String?,
+    glycineTaken: Boolean,
+    glycineTime: String?,
+    dogPillTaken: Boolean,
+    dogPillTime: String?,
     onLogAdhoc: (String, String) -> Unit
 ) {
     Card(
@@ -391,8 +482,12 @@ fun AdhocLoggingCard(
 
             AdhocItemRow(
                 title = "Creatine 5g",
-                subtitle = "In Morning Coffee",
+                subtitle = if (creatineTaken && !creatineTime.isNullOrBlank()) "Taken today at $creatineTime" else "In Morning Coffee",
                 icon = Icons.Filled.Coffee,
+                isTaken = creatineTaken,
+                takenTime = creatineTime,
+                actionLabel = "Log Taken",
+                takenLabel = "Taken",
                 onLog = { onLogAdhoc("creatine", "Creatine 5g") }
             )
 
@@ -400,8 +495,12 @@ fun AdhocLoggingCard(
 
             AdhocItemRow(
                 title = "Glycine 1500mg",
-                subtitle = "In Evening Tea",
+                subtitle = if (glycineTaken && !glycineTime.isNullOrBlank()) "Taken today at $glycineTime" else "In Evening Tea",
                 icon = Icons.Filled.EmojiFoodBeverage,
+                isTaken = glycineTaken,
+                takenTime = glycineTime,
+                actionLabel = "Log Taken",
+                takenLabel = "Taken",
                 onLog = { onLogAdhoc("glycine", "Glycine 1500mg") }
             )
 
@@ -409,8 +508,12 @@ fun AdhocLoggingCard(
 
             AdhocItemRow(
                 title = "Dog Pill",
-                subtitle = "Daily Dog Medication",
+                subtitle = if (dogPillTaken && !dogPillTime.isNullOrBlank()) "Given today at $dogPillTime" else "Daily Dog Medication",
                 icon = Icons.Filled.Pets,
+                isTaken = dogPillTaken,
+                takenTime = dogPillTime,
+                actionLabel = "Log Given",
+                takenLabel = "Given",
                 onLog = { onLogAdhoc("dog_pill", "Dog Pill") }
             )
         }
@@ -422,33 +525,90 @@ fun AdhocItemRow(
     title: String,
     subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isTaken: Boolean = false,
+    takenTime: String? = null,
+    actionLabel: String = "Log Taken",
+    takenLabel: String = "Taken",
     onLog: () -> Unit
 ) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("Log $title Again?", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                val timeMsg = if (!takenTime.isNullOrBlank()) " at $takenTime" else ""
+                Text(
+                    "You have already logged $title today$timeMsg.\n\nDo you really want to log it again?",
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showConfirmDialog = false
+                        onLog()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                ) {
+                    Text("Yes, Log Again", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showConfirmDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
+                ) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = BgSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(BgCard)
-            .border(1.dp, BorderColor.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .border(1.dp, if (isTaken) AccentGreen.copy(alpha = 0.4f) else BorderColor.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(icon, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+            Icon(icon, contentDescription = null, tint = if (isTaken) AccentGreen else TextSecondary, modifier = Modifier.size(20.dp))
             Column {
                 Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, color = TextSecondary, fontSize = 11.sp)
+                Text(subtitle, color = if (isTaken) AccentGreen else TextSecondary, fontSize = 11.sp)
             }
         }
 
         Button(
-            onClick = onLog,
+            onClick = {
+                if (isTaken) {
+                    showConfirmDialog = true
+                } else {
+                    onLog()
+                }
+            },
             shape = RoundedCornerShape(8.dp),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen.copy(alpha = 0.2f), contentColor = AccentGreen)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isTaken) AccentGreen.copy(alpha = 0.2f) else AccentGreen.copy(alpha = 0.25f),
+                contentColor = AccentGreen
+            ),
+            border = if (isTaken) ButtonDefaults.outlinedButtonBorder.copy(
+                brush = androidx.compose.ui.graphics.SolidColor(AccentGreen.copy(alpha = 0.5f))
+            ) else null
         ) {
-            Text("Log Taken", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (isTaken) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = AccentGreen)
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+            Text(if (isTaken) takenLabel else actionLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

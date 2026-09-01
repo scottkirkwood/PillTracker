@@ -169,10 +169,63 @@ class PillRepository(private val context: Context) {
         }
     }
 
-    // Check if morning/evening routine was logged today
+    // Parse UTC ISO-8601 timestamp string into java.util.Date
+    fun parseUtcIsoDate(isoString: String): Date? {
+        val formats = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd"
+        )
+        for (format in formats) {
+            try {
+                val sdf = SimpleDateFormat(format, Locale.US).apply {
+                    if (format.endsWith("'Z'")) {
+                        timeZone = TimeZone.getTimeZone("UTC")
+                    }
+                }
+                val parsed = sdf.parse(isoString)
+                if (parsed != null) return parsed
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
+    // Compare whether two instants fall on the exact same calendar day in device's local timezone
+    fun isSameLocalDay(date1: Date, date2: Date = Date()): Boolean {
+        val cal1 = Calendar.getInstance().apply { time = date1 }
+        val cal2 = Calendar.getInstance().apply { time = date2 }
+        return cal1.get(Calendar.ERA) == cal2.get(Calendar.ERA) &&
+               cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR) &&
+               cal1.get(Calendar.DAY_OF_YEAR) == cal2.get(Calendar.DAY_OF_YEAR)
+    }
+
+    // Returns the most recent PillLog for a routine taken today in local device time
+    fun getLastRoutineTakenToday(routine: String): PillLog? {
+        val now = Date()
+        return _logsFlow.value.firstOrNull { log ->
+            log.routine.equals(routine, ignoreCase = true) &&
+            parseUtcIsoDate(log.timestamp)?.let { isSameLocalDay(it, now) } == true
+        }
+    }
+
+    // Check if morning/evening routine was logged today (in local device time)
     fun isRoutineTakenToday(routine: String): Boolean {
-        val todayPrefix = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        return _logsFlow.value.any { it.routine.equals(routine, ignoreCase = true) && it.timestamp.startsWith(todayPrefix) }
+        return getLastRoutineTakenToday(routine) != null
+    }
+
+    // Returns the most recent PillLog for an adhoc item taken today in local device time
+    fun getLastItemTakenToday(itemId: String): PillLog? {
+        val now = Date()
+        return _logsFlow.value.firstOrNull { log ->
+            log.itemsTaken.contains(itemId) &&
+            parseUtcIsoDate(log.timestamp)?.let { isSameLocalDay(it, now) } == true
+        }
+    }
+
+    fun isItemTakenToday(itemId: String): Boolean {
+        return getLastItemTakenToday(itemId) != null
     }
 
     // Log routine intake (Android is source of truth)

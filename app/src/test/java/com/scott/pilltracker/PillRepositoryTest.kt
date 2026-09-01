@@ -5,6 +5,11 @@ import com.scott.pilltracker.model.PillRoutineConfig
 import com.scott.pilltracker.model.PillsConfig
 import org.junit.Assert.*
 import org.junit.Test
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class PillRepositoryTest {
 
@@ -71,5 +76,47 @@ class PillRepositoryTest {
 
         assertFalse("2 days offline should NOT be stale", isRecentStale)
         assertTrue("9 days offline SHOULD be marked stale", isOldStale)
+    }
+
+    @Test
+    fun testSameLocalDayComparisonAcrossUtcMidnight() {
+        // Suppose user is in EDT (UTC-4)
+        val origTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+
+            // Yesterday was Aug 31, 2026. Evening pills taken at 8:30 PM EDT.
+            // In UTC, this is 2026-09-01T00:30:00Z (crossing midnight into Sept 1 in UTC!)
+            val utcTimestampYesterdayEvening = "2026-09-01T00:30:00Z"
+
+            val sdfUtc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val logDate = sdfUtc.parse(utcTimestampYesterdayEvening)!!
+
+            // Today is Sept 1, 2026 at 10:00 AM EDT
+            val calToday = Calendar.getInstance().apply {
+                set(2026, Calendar.SEPTEMBER, 1, 10, 0, 0)
+            }
+            val todayDate = calToday.time
+
+            // Compare local calendar days
+            val calLog = Calendar.getInstance().apply { time = logDate }
+
+            // calLog in EDT should be Aug 31
+            assertEquals(Calendar.AUGUST, calLog.get(Calendar.MONTH))
+            assertEquals(31, calLog.get(Calendar.DAY_OF_MONTH))
+
+            // calToday in EDT is Sept 1
+            assertEquals(Calendar.SEPTEMBER, calToday.get(Calendar.MONTH))
+            assertEquals(1, calToday.get(Calendar.DAY_OF_MONTH))
+
+            val isSameDay = (calLog.get(Calendar.YEAR) == calToday.get(Calendar.YEAR) &&
+                    calLog.get(Calendar.DAY_OF_YEAR) == calToday.get(Calendar.DAY_OF_YEAR))
+
+            assertFalse("Evening pills taken yesterday at 8:30pm EDT should NOT be considered taken today!", isSameDay)
+        } finally {
+            TimeZone.setDefault(origTz)
+        }
     }
 }
