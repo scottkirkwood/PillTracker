@@ -26,6 +26,10 @@ import com.scott.pilltracker.ui.screens.HomeScreen
 import com.scott.pilltracker.ui.screens.SettingsScreen
 import com.scott.pilltracker.ui.theme.*
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
 class MainActivity : ComponentActivity() {
 
     private lateinit var repository: PillRepository
@@ -46,6 +50,16 @@ class MainActivity : ComponentActivity() {
             PillTrackerTheme {
                 MainAppScaffold(repository = repository)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.scott.pilltracker.alarm.AlarmRingtonePlayer.stop()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                repository.syncWithCloud()
+            } catch (_: Exception) {}
         }
     }
 

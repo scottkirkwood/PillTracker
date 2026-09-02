@@ -24,6 +24,11 @@ class NotificationHelper(private val context: Context) {
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Delete deprecated alarm channel if present to prevent caching silent settings
+            try {
+                notificationManager.deleteNotificationChannel("pill_channel_alarm")
+            } catch (_: Exception) {}
+
             // 1. Quiet Channel (Silent, heads-up, no sound/vibration)
             val quietChannel = NotificationChannel(
                 CHANNEL_QUIET_ID,
@@ -36,8 +41,9 @@ class NotificationHelper(private val context: Context) {
                 setShowBadge(true)
             }
 
-            // 2. Escalated Alarm Channel (Loud ringtone/beep, strong vibration)
+            // 2. Escalated Alarm Channel (Loud alarm ringtone, strong vibration, high priority)
             val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
             val audioAttributes = AudioAttributes.Builder()
@@ -53,8 +59,10 @@ class NotificationHelper(private val context: Context) {
                 description = context.getString(R.string.channel_alarm_desc)
                 setSound(alarmSound, audioAttributes)
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 600, 250, 600, 250, 600)
+                vibrationPattern = longArrayOf(0, 800, 300, 800, 300, 800)
                 setShowBadge(true)
+                setBypassDnd(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
 
             notificationManager.createNotificationChannel(quietChannel)
@@ -138,6 +146,9 @@ class NotificationHelper(private val context: Context) {
     fun showEscalatedAlarm(routine: String, title: String, message: String, activeItems: List<PillItem>) {
         val notifId = getNotificationIdForRoutine(routine)
 
+        // 1. Cancel previous quiet notification with same ID first so Android does not preserve CHANNEL_QUIET_ID!
+        notificationManager.cancel(notifId)
+
         val contentIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_ROUTINE, routine)
@@ -174,14 +185,24 @@ class NotificationHelper(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ALARM_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("⏰ $title (Missed Reminder)")
             .setContentText(message)
             .setContentIntent(contentPendingIntent)
+            .setFullScreenIntent(contentPendingIntent, true)
             .setAutoCancel(true)
+            .setOngoing(true)
+            .setOnlyAlertOnce(false)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSound(alarmSound, android.media.AudioManager.STREAM_ALARM)
+            .setVibrate(longArrayOf(0, 800, 300, 800, 300, 800))
             .addAction(android.R.drawable.checkbox_on_background, "Done", donePendingIntent)
             .addAction(android.R.drawable.ic_menu_recent_history, "Snooze 30m", snoozePendingIntent)
 
@@ -190,16 +211,20 @@ class NotificationHelper(private val context: Context) {
         } catch (e: SecurityException) {
             // Security exception if permission missing
         }
+
+        // 2. Play audible alarm ringtone on USAGE_ALARM stream
+        AlarmRingtonePlayer.play(context)
     }
 
     fun cancelNotification(routine: String) {
         val notifId = getNotificationIdForRoutine(routine)
         notificationManager.cancel(notifId)
+        AlarmRingtonePlayer.stop()
     }
 
     companion object {
         const val CHANNEL_QUIET_ID = "pill_channel_quiet"
-        const val CHANNEL_ALARM_ID = "pill_channel_alarm"
+        const val CHANNEL_ALARM_ID = "pill_channel_alarm_v2"
 
         const val ACTION_TAKE_ROUTINE = "com.scott.pilltracker.ACTION_TAKE_ROUTINE"
         const val ACTION_SNOOZE = "com.scott.pilltracker.ACTION_SNOOZE"

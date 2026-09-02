@@ -66,6 +66,14 @@ fun HomeScreen(
 
     var isSyncing by remember { mutableStateOf(false) }
 
+    LaunchedEffect(Unit) {
+        scope.launch {
+            isSyncing = true
+            repository.syncWithCloud()
+            isSyncing = false
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -114,7 +122,10 @@ fun HomeScreen(
                         repository.logRoutineTaken("morning", selectedIds, skipped)
                         AlarmScheduler(context).cancelEscalationAlarm("morning")
                         NotificationHelper(context).cancelNotification("morning")
-                        Toast.makeText(context, "Morning stack logged!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Morning stack logged! Uploading...", Toast.LENGTH_SHORT).show()
+                        isSyncing = true
+                        repository.syncWithCloud()
+                        isSyncing = false
                     }
                 }
             )
@@ -140,7 +151,10 @@ fun HomeScreen(
                         repository.logRoutineTaken("evening", selectedIds, skipped)
                         AlarmScheduler(context).cancelEscalationAlarm("evening")
                         NotificationHelper(context).cancelNotification("evening")
-                        Toast.makeText(context, "Evening stack logged!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Evening stack logged! Uploading...", Toast.LENGTH_SHORT).show()
+                        isSyncing = true
+                        repository.syncWithCloud()
+                        isSyncing = false
                     }
                 }
             )
@@ -158,7 +172,10 @@ fun HomeScreen(
                 onLogAdhoc = { id, name ->
                     scope.launch {
                         repository.logAdhocTaken(id, "Logged: $name")
-                        Toast.makeText(context, "$name logged!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "$name logged! Uploading...", Toast.LENGTH_SHORT).show()
+                        isSyncing = true
+                        repository.syncWithCloud()
+                        isSyncing = false
                     }
                 }
             )

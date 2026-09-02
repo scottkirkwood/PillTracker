@@ -77,6 +77,24 @@ fun SettingsScreen(
                         time = evening?.time ?: "20:00",
                         rule = "Quiet notification -> Loud alarm after ${evening?.escalateAfterMinutes ?: 60}m"
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = {
+                            if (com.scott.pilltracker.alarm.AlarmRingtonePlayer.isPlaying) {
+                                com.scott.pilltracker.alarm.AlarmRingtonePlayer.stop()
+                                Toast.makeText(context, "Alarm stopped", Toast.LENGTH_SHORT).show()
+                            } else {
+                                com.scott.pilltracker.alarm.AlarmRingtonePlayer.play(context, 5000L)
+                                Toast.makeText(context, "Playing test alarm sound for 5s...", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                    ) {
+                        Icon(Icons.Filled.VolumeUp, contentDescription = "Test Alarm", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Test Audible Alarm Sound (5s)")
+                    }
                 }
             }
         }

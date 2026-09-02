@@ -6,10 +6,12 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.scott.pilltracker.model.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStreamReader
@@ -254,6 +256,20 @@ class PillRepository(private val context: Context) {
 
         val updatedLogs = listOf(newLog) + _logsFlow.value
         saveLocalLogs(updatedLogs)
+
+        // Automatically trigger immediate background cloud sync and enqueue WorkManager
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                syncWithCloud()
+            } catch (e: Exception) {
+                Log.w(TAG, "Auto-sync failed after logging: ${e.message}")
+            }
+        }
+        try {
+            val syncRequest = androidx.work.OneTimeWorkRequestBuilder<com.scott.pilltracker.sync.SyncWorker>().build()
+            androidx.work.WorkManager.getInstance(context).enqueue(syncRequest)
+        } catch (_: Exception) {}
+
         newLog
     }
 

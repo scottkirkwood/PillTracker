@@ -15,9 +15,59 @@ class AlarmScheduler(private val context: Context) {
 
     // Schedule exact daily alarm for morning and evening routines
     fun scheduleAllDailyRoutines(routines: Map<String, PillRoutineConfig>) {
+        val repository = com.scott.pilltracker.data.PillRepository.getInstance(context)
+        val now = System.currentTimeMillis()
+
         routines.forEach { (routineKey, routineConfig) ->
             if (routineConfig.time.isNotBlank()) {
-                scheduleDailyRoutine(routineKey, routineConfig.time)
+                val parts = routineConfig.time.split(":")
+                if (parts.size == 2) {
+                    val hour = parts[0].toIntOrNull() ?: return@forEach
+                    val minute = parts[1].toIntOrNull() ?: return@forEach
+
+                    val todayCal = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, hour)
+                        set(Calendar.MINUTE, minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+
+                    val isTaken = repository.isRoutineTakenToday(routineKey)
+                    val escalateDelay = if (routineConfig.escalateAfterMinutes > 0) routineConfig.escalateAfterMinutes else 60
+
+                    if (!isTaken) {
+                        val scheduledTimeToday = todayCal.timeInMillis
+                        val escalateTimeToday = scheduledTimeToday + (escalateDelay * 60 * 1000L)
+
+                        if (now < scheduledTimeToday) {
+                            // Routine due later today
+                            scheduleDailyRoutine(routineKey, routineConfig.time)
+                        } else if (now in scheduledTimeToday until escalateTimeToday) {
+                            // Within the quiet grace period today; ensure escalation alarm is armed!
+                            if (routineConfig.escalateAlarm) {
+                                val remainingMinutes = ((escalateTimeToday - now) / 60000L).toInt().coerceAtLeast(1)
+                                scheduleEscalationAlarm(routineKey, remainingMinutes)
+                            }
+                            // Also schedule tomorrow's stage 1
+                            scheduleDailyRoutine(routineKey, routineConfig.time)
+                        } else if (now >= escalateTimeToday) {
+                            // Escalation is OVERDUE today!
+                            if (routineConfig.escalateAlarm) {
+                                // Trigger escalation alarm immediately
+                                val intent = Intent(context, AlarmReceiver::class.java).apply {
+                                    putExtra(EXTRA_ROUTINE, routineKey)
+                                    putExtra(EXTRA_STAGE, STAGE_ESCALATE)
+                                }
+                                context.sendBroadcast(intent)
+                            }
+                            // Also schedule tomorrow's stage 1
+                            scheduleDailyRoutine(routineKey, routineConfig.time)
+                        }
+                    } else {
+                        // Already taken today: schedule for tomorrow
+                        scheduleDailyRoutine(routineKey, routineConfig.time)
+                    }
+                }
             }
         }
     }
@@ -55,24 +105,8 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            } else {
-                alarmManager.setExact(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            }
-            Log.d(TAG, "Scheduled Stage 1 quiet alarm for $routine at ${calendar.time}")
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot schedule exact alarm: ${e.message}")
-        }
+        setExactOrAlarmClock(calendar.timeInMillis, pendingIntent, routine)
+        Log.d(TAG, "Scheduled Stage 1 quiet alarm for $routine at ${calendar.time}")
     }
 
     // Schedule Stage 2 Escalation (Audible alarm after N minutes)
@@ -92,6 +126,31 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        setExactOrAlarmClock(triggerTime, pendingIntent, routine)
+        Log.d(TAG, "Scheduled Stage 2 escalation alarm for $routine in $delayMinutes mins (at ${java.util.Date(triggerTime)})")
+    }
+
+    // Sets alarm clock or exact alarm with fallback
+    private fun setExactOrAlarmClock(triggerTime: Long, pendingIntent: PendingIntent, routine: String) {
+        val showIntent = PendingIntent.getActivity(
+            context,
+            getRequestCode(routine, STAGE_ESCALATE),
+            Intent(context, com.scott.pilltracker.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_ROUTINE, routine)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        try {
+            val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTime, showIntent)
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+            Log.d(TAG, "Scheduled setAlarmClock for $routine at ${java.util.Date(triggerTime)}")
+            return
+        } catch (e: SecurityException) {
+            Log.w(TAG, "setAlarmClock security exception: ${e.message}, falling back...")
+        }
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(
@@ -106,14 +165,16 @@ class AlarmScheduler(private val context: Context) {
                     pendingIntent
                 )
             }
-            Log.d(TAG, "Scheduled Stage 2 escalation alarm for $routine in $delayMinutes mins")
+            Log.d(TAG, "Scheduled setExactAndAllowWhileIdle for $routine at ${java.util.Date(triggerTime)}")
         } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot schedule escalation alarm: ${e.message}")
+            Log.e(TAG, "Cannot schedule exact alarm: ${e.message}, using inexact fallback")
+            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
         }
     }
 
     // Cancel Stage 2 Escalation (Called when pills are taken)
     fun cancelEscalationAlarm(routine: String) {
+        AlarmRingtonePlayer.stop()
         val requestCode = getRequestCode(routine, STAGE_ESCALATE)
         val intent = Intent(context, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
