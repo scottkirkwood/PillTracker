@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -24,9 +25,10 @@ class NotificationHelper(private val context: Context) {
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Delete deprecated alarm channel if present to prevent caching silent settings
+            // Delete deprecated alarm channels if present to prevent caching silent settings
             try {
                 notificationManager.deleteNotificationChannel("pill_channel_alarm")
+                notificationManager.deleteNotificationChannel("pill_channel_alarm_v2")
             } catch (_: Exception) {}
 
             // 1. Quiet Channel (Silent, heads-up, no sound/vibration)
@@ -41,10 +43,8 @@ class NotificationHelper(private val context: Context) {
                 setShowBadge(true)
             }
 
-            // 2. Escalated Alarm Channel (Loud alarm ringtone, strong vibration, high priority)
-            val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            // 2. Escalated Alarm Channel (Loud alarm chime, strong vibration, high priority)
+            val alarmSound: Uri = Uri.parse("android.resource://${context.packageName}/${R.raw.pill_alarm}")
 
             val audioAttributes = AudioAttributes.Builder()
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -185,9 +185,7 @@ class NotificationHelper(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val alarmSound = Uri.parse("android.resource://${context.packageName}/${R.raw.pill_alarm}")
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ALARM_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
@@ -224,7 +222,7 @@ class NotificationHelper(private val context: Context) {
 
     companion object {
         const val CHANNEL_QUIET_ID = "pill_channel_quiet"
-        const val CHANNEL_ALARM_ID = "pill_channel_alarm_v2"
+        const val CHANNEL_ALARM_ID = "pill_channel_alarm_v3"
 
         const val ACTION_TAKE_ROUTINE = "com.scott.pilltracker.ACTION_TAKE_ROUTINE"
         const val ACTION_SNOOZE = "com.scott.pilltracker.ACTION_SNOOZE"
